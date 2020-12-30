@@ -10,7 +10,7 @@ library(readr)
 library(stringr)
 library(dplyr)
 library(ggplot2)
-library(zoo)
+#library(zoo)
 library(plotly)
 library(shinythemes)
 #library(shinycssloaders)
@@ -18,6 +18,30 @@ library(shinythemes)
 # Load data:
 app_data <- read_csv("./med_inc_data.csv")
 gap_data <- read_csv("./gender_gap_data.csv")
+
+# Define normalization function:
+norm_to_year <- function(my_data, year) {
+    # Create normalized column
+    my_data$norm_val <- NA
+    my_data$norm_val <- as.numeric(my_data$norm_val)
+    # Loop through data and create normalized column
+    age_groups = unique(my_data$Age)
+    for (sex in unique(my_data$Sex)) {
+        for (age in age_groups) {
+            base_val = filter(my_data, Sex == sex, Year == year, Age == age)$median_2019
+            my_data[my_data$Sex == sex & my_data$Age == age, ]$norm_val <- my_data[my_data$Sex == sex & my_data$Age == age, ]$median_2019 / base_val * 100
+        }
+    }
+    return(my_data)
+}
+# Define function for finding highest minimum year per age group
+get_norm_yrs <- function(my_data, age_selection) {
+    mins = c()
+    for (age in age_selection) {
+        mins = append(mins, min(my_data[my_data$Age == age, ]$Year))
+    }
+    return(max(mins):2019)
+}
 
 # Define UI 
 ui <- fluidPage(theme = shinytheme("paper"),
@@ -39,7 +63,8 @@ ui <- fluidPage(theme = shinytheme("paper"),
             sidebarPanel(
                 br(),
                 checkboxGroupInput("age_gps", "Select Age Groups for Comparison:", choices = unique(app_data$Age), selected = "15+"),
-                checkboxInput("norm_to_last", "Normalize Incomes to Last Observation (2019)?")
+                checkboxInput("norm_to_last", "Normalize Incomes"),
+                uiOutput("norm_yr_age")
             ),
             mainPanel(
                 br(),
@@ -67,7 +92,8 @@ ui <- fluidPage(theme = shinytheme("paper"),
                 sidebarPanel(
                     selectInput("sex_tab_age_groups", "Select Age Group:", choices = unique(app_data$Age)), 
                     br(),
-                    checkboxInput("sexes_norm_to_last", "Normalize Incomes to Last Observation (2019)?"),
+                    checkboxInput("sexes_norm_to_last", "Normalize Incomes"),
+                    uiOutput("norm_yr_sexes")
                 ),
                 mainPanel(
                     plotlyOutput("plot_sex") 
@@ -80,18 +106,24 @@ ui <- fluidPage(theme = shinytheme("paper"),
 # Define server logic 
 server <- function(input, output) {
     
-    # Server Logic for Age Comparison Tab ------------------------------------- 
+    # Server Logic for Age Comparison Tab -------------------------------------
+    output$norm_yr_age <- renderUI({
+        if (input$norm_to_last == TRUE) {
+            selectInput("norm_year_age", "Year", choices = get_norm_yrs(app_data, input$age_gps))
+        }
+    })
+    
     plot_male_age <- reactive(
         
         if (input$norm_to_last == TRUE) {
             
-            ggplot(filter(app_data, Sex == "Male", Age %in% input$age_gps),
+            ggplot(norm_to_year(filter(app_data, Sex == "Male", Age %in% input$age_gps), input$norm_year_age),
                    aes(x = Year,
-                       y = norm_last,
+                       y = norm_val,
                        color = Age))+
                 geom_line()+
                 ggtitle("Male Median Real Wages by Age Group")+
-                ylab("Normalized Wage (100 = 2019 Wage)")
+                ylab(paste0("Normalized Wage (100 = ", input$norm_year_age, " Wage)"))
             
             
         } else {
@@ -112,14 +144,13 @@ server <- function(input, output) {
         
         if (input$norm_to_last == TRUE) {
             
-            ggplot(filter(app_data, Sex == "Female", Age %in% input$age_gps),
+            ggplot(norm_to_year(filter(app_data, Sex == "Female", Age %in% input$age_gps), input$norm_year_age),
                    aes(x = Year,
-                       y = norm_last,
+                       y = norm_val,
                        color = Age))+
                 geom_line()+
                 ggtitle("Female Median Real Wages by Age Group")+
-                ylab("Normalized Wage (100 = 2019 Wage)")
-            
+                ylab(paste0("Normalized Wage (100 = ", input$norm_year_age, " Wage)"))
             
         } else {
             
@@ -144,15 +175,21 @@ server <- function(input, output) {
     })
     
     # Server Logic for Sex Comparison Tab -------------------------------------
+    output$norm_yr_sexes <- renderUI({
+        if (input$sexes_norm_to_last == TRUE) {
+            selectInput("norm_year", "Year", choices = get_norm_yrs(app_data, input$sex_tab_age_groups))
+        }
+    })
+    
     plot_sex <- reactive(
         if (input$sexes_norm_to_last == TRUE) {
-            ggplot(filter(app_data, Age == input$sex_tab_age_groups),
+            ggplot(norm_to_year(filter(app_data, Age == input$sex_tab_age_groups), input$norm_year),
                    aes(x = Year,
-                       y = norm_last,
+                       y = norm_val,
                        color = Sex))+
                 geom_line()+
                 ggtitle("Male and Female Real Median Wages")+
-                ylab("Normalized Wage (100 = 2019 Wage)")
+                ylab(paste0("Normalized Wage (100 = ", input$norm_year, " Wage)"))
         } else {
             ggplot(filter(app_data, Age == input$sex_tab_age_groups),
                    aes(x = Year,
